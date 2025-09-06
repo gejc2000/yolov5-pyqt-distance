@@ -60,7 +60,7 @@ p_c 是通过应用旋转和平移矩阵从相机坐标系转换到世界坐标�
 # ### 坐标系转换
 # def convert_2D_to_3D(point2D, R, t, IntrinsicMatrix, K, P, f, principal_point, height):
 #     """
-#
+
 #     像素坐标转世界坐标
 #     Args:
 #         point2D: 像素坐标点
@@ -72,22 +72,22 @@ p_c 是通过应用旋转和平移矩阵从相机坐标系转换到世界坐标�
 #         f:焦距
 #         principal_point:主点
 #         height:Z_w
-#
+
 #     Returns:返回世界坐标系点，point3D_no_correct, point3D_yes_correct
-#
+
 #     """
 #     point3D_no_correct = []
 #     point3D_yes_correct = []
-#
+
 #     ##[(u1,v1),
 #     #   (u2,v2)]
-#
+
 #     point2D = (np.array(point2D, dtype='float32'))
-#
+
 #     # (u,v,1)
 #     # point2D_op = np.hstack((point2D, np.ones((num_Pts, 1))))
 #     point2D_op = np.hstack((point2D, np.array([1])))  # 2D————》3D了加一个维度
-#
+
 #     # 畸变矫正后变量
 #     uvPoint_yes_correct = distortion_correction(point2D, principal_point, f, K, P)
 #     ##########  前面是对像素点的矫正以及像素坐标系到图像坐标系的转换
@@ -95,7 +95,7 @@ p_c 是通过应用旋转和平移矩阵从相机坐标系转换到世界坐标�
 #     rMat_inv = np.linalg.inv(R)
 #     # 内参矩阵的逆矩阵
 #     IntrinsicMatrix_inv = np.linalg.inv(IntrinsicMatrix)
-#
+
 #     # uvPoint变量切换即可
 #     uvPoint = point2D_op
 #     uvPoint_yes_correct_T = uvPoint_yes_correct.T
@@ -104,73 +104,100 @@ p_c 是通过应用旋转和平移矩阵从相机坐标系转换到世界坐标�
 #     #   # 畸变矫正后变量  * 变化矩阵R的-1
 #     tempMat1_yes_correct = np.matmul(tempMat, uvPoint_yes_correct_T)  # mat1=R^(-1)*K^(-1)([U,V,1].T)
 #     tempMat2_yes_correct = np.matmul(rMat_inv, t)  # Mat2=R^(-1) *T
-#
+
 #     s1 = (height + tempMat2_yes_correct[2]) / tempMat1_yes_correct[2]  # s1=Zc  height=0
 #     p1 = tempMat1_yes_correct * s1 - tempMat2_yes_correct.T  # [Xw,Yw,Zw].T  =mat1*zc -mat2
 #     p_c = np.matmul(R, p1.reshape(-1, 1)) + t.reshape(-1, 1)
-#
+
 #     return p1, p_c
-
-### 坐标系转换
-def convert_2D_to_3D(point2D, R, t, IntrinsicMatrix, K, P, f, principal_point, height):
+def convert_2D_to_3D(point2D, R, t, IntrinsicMatrix, K, P, f, principal_point, height=0.0):
     """
-
-    像素坐标转世界坐标
+    将像素坐标转换为世界坐标（假设点位于 Z_w = height 的平面上）
+    
     Args:
-        point2D: 像素坐标点
-        R: 旋转矩阵
-        t: 平移矩阵
-        IntrinsicMatrix:内参矩阵
-        K:径向畸变
-        P:切向畸变
-        f:焦距
-        principal_point:主点
-        height:Z_w
+        point2D: (N, 2) 或 (2,) 的像素坐标点
+        R: (3,3) 旋转矩阵（世界→相机）
+        t: (3,) 平移向量（世界→相机）
+        IntrinsicMatrix: (3,3) 内参矩阵
+        K: (k1,k2) 径向畸变系数
+        P: (p1,p2) 切向畸变系数
+        f: 焦距（fx, fy）或标量（若相等）
+        principal_point: (cx, cy) 主点
+        height: float, 世界坐标系下的 Z_w 值（如地面为 0）
 
-    Returns:返回世界坐标系点，point3D_no_correct, point3D_yes_correct
-
+    Returns:
+        point3D_world: (N, 3) 转换后的世界坐标点
+        point3D_camera: (N, 3) 对应的相机坐标系下的点
     """
-    point3D_no_correct = []
-    point3D_yes_correct = []
+    # 确保输入是 numpy 数组
+    point2D = np.array(point2D, dtype=np.float32)
+    if point2D.ndim == 1:
+        point2D = point2D.reshape(1, -1)  # (2,) -> (1, 2)
+    N = point2D.shape[0]
 
-    ##[(u1,v1),
-    #   (u2,v2)]
+    # 1. 畸变矫正（可选：若已矫正可跳过）
+    uv_undistorted = distortion_correction(point2D, principal_point, f, K, P)  # (N, 2)
 
-    point2D = (np.array(point2D, dtype='float32'))
-
-    # (u,v,1)
-    # point2D_op = np.hstack((point2D, np.ones((num_Pts, 1))))
-    point2D_op = np.hstack((point2D, np.array([1])))  # 2D————》3D了加一个维度
-
-    # 畸变矫正后变量
-    uvPoint_yes_correct = distortion_correction(point2D, principal_point, f, K, P)
-    ##########  前面是对像素点的矫正以及像素坐标系到图像坐标系的转换
-    # R逆矩阵
-    rMat_inv = np.linalg.inv(R)
-    # 内参矩阵的逆矩阵
+    # 2. 构造归一化图像平面坐标（去内参）
+    # [x_norm, y_norm, 1]^T = K^(-1) @ [u, v, 1]^T
+    ones = np.ones((N, 1))
+    uv_homogeneous = np.hstack([uv_undistorted, ones])  # (N, 3)
+    
+    # 使用内参矩阵逆变换到归一化坐标
     IntrinsicMatrix_inv = np.linalg.inv(IntrinsicMatrix)
+    xy_normalized = (IntrinsicMatrix_inv @ uv_homogeneous.T).T  # (N, 3)
 
-    # uvPoint变量切换即可
-    uvPoint = point2D_op
-    uvPoint_yes_correct_T = uvPoint_yes_correct.T
-    ##########  图像坐标系 *平移矩阵
-    tempMat = np.matmul(rMat_inv, IntrinsicMatrix_inv)
-    #   # 畸变矫正后变量  * 变化矩阵R的-1
-    tempMat1_yes_correct = np.matmul(tempMat, uvPoint_yes_correct_T)  # mat1=R^(-1)*K^(-1)([U,V,1].T)
+    # 3. 解算深度（基于 Z_w = height）
+    # 相机坐标系下点：P_c = s * [x_norm, y_norm, 1]
+    # 世界坐标系下点：P_w = R^T @ (P_c - t)
+    # 已知 P_w[2] = height，求解 s
 
-    # a = np.array([
-    #     [1,2,3,4],
-    #     [5,6,7,8],
-    #     [9,10,11,12]
-    # ])
-    tempMat2_yes_correct = np.matmul(rMat_inv, t)  # Mat2=R^(-1) *T
+    R_inv = R.T  # R^(-1) = R^T
+    t = t.reshape(3, 1)  # (3,) -> (3,1)
 
-    s1 = (height + tempMat2_yes_correct[2]) / tempMat1_yes_correct[2]  # s1=Zc  height=0
-    p1 = tempMat1_yes_correct * s1 - tempMat2_yes_correct.T  # [Xw,Yw,Zw].T  =mat1*zc -mat2
-    p_c = np.matmul(R, p1.reshape(-1, 1)) + t.reshape(-1, 1)
+    # 提取归一化方向向量
+    x_norm = xy_normalized[:, 0]  # (N,)
+    y_norm = xy_normalized[:, 1]
+    z_norm = xy_normalized[:, 2]
 
-    return p1, p_c
+    # 计算尺度因子 s
+    # height = R^T @ (s * [x_norm; y_norm; 1] - t) 的第3个分量
+    # => height = [R^T]_2 @ (s * d - t)
+    # => s = (height + [R^T]_2 @ t) / ([R^T]_2 @ d)
+    R_inv_row2 = R_inv[2, :]  # R^T 的第2行（对应 Z_w）
+    numerator = height + R_inv_row2 @ t  # 标量
+    denominator = R_inv_row2 @ np.array([x_norm, y_norm, z_norm])  # (N,)
 
+    s = numerator / denominator  # (N,)
+
+    # 4. 计算相机坐标系下的 3D 点
+    point3D_camera = s[:, None] * xy_normalized  # (N,3)
+
+    # 5. 转换到世界坐标系
+    point3D_world = (R_inv @ (point3D_camera.T - t)).T  # (N,3)
+
+    # 如果输入是单点，返回 (3,) 形状
+    if N == 1:
+        point3D_world = point3D_world[0]
+        point3D_camera = point3D_camera[0]
+
+    return point3D_world, point3D_camera
+
+
+def distortion_correction(points2D, principal_point, f, K, P):
+    """
+    简化版畸变矫正（实际中建议使用 cv2.undistortPoints）
+    这里假设输入是已知畸变参数下的近似反向矫正
+    """
+    # 注意：真实畸变矫正是非线性迭代过程
+    # 此处仅为示意，实际项目建议使用 OpenCV
+    import cv2
+    K_mat = np.array([[f[0], 0, principal_point[0]],
+                      [0, f[1], principal_point[1]],
+                      [0, 0, 1]])
+    dist_coeffs = np.array([K[0], K[1], P[0], P[1], 0])  # k1,k2,p1,p2,k3
+    points_undistorted = cv2.undistortPoints(points2D, K_mat, dist_coeffs, None, K_mat)
+    return points_undistorted.reshape(-1, 2)
 
 """函数定义：函数接受一个二维坐标点 uvPoint、主点 principal_point、焦距 f、径向畸变系数 K 和切向畸变系数 P 作为输入，并返回校正后的坐标点。
 
